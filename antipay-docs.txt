@@ -1,0 +1,48 @@
+API Reference Guide - AntiPay
+
+The AntiPay API is organized around REST. Our API returns JSON responses and uses standard HTTP response codes.
+
+----------------------------------------
+BASE URL
+----------------------------------------
+https://pay.antipay.site/api/v1
+
+----------------------------------------
+AUTHENTICATION
+----------------------------------------
+All requests must include your API key in the header:
+x-api-key: YOUR_BRAND_API_KEY
+
+⚠️ The API key variable name must be set to 'x-api-key' in your request headers.
+
+----------------------------------------
+1. CREATE PAYMENT SESSION
+----------------------------------------
+POST /api/v1/create
+
+Request Parameters:
+- amount (number, required): The amount to be charged in BDT.
+- val_id (string, optional): Your internal reference (Order ID).
+- webhook_url (string, required): Your backend endpoint to receive payment updates.
+
+----------------------------------------
+2. VERIFY PAYMENT (SERVER ONLY)
+----------------------------------------
+POST /api/v1/verify
+
+----------------------------------------
+3. WEBHOOK (IMPORTANT)
+----------------------------------------
+AntiPay sends a POST request to your webhook_url when payment status changes.
+⚠️ This is the PRIMARY way to confirm payments.
+
+----------------------------------------
+FINAL INTEGRATION FLOW
+----------------------------------------
+1. Your backend -> /create (get paymentUrl)
+2. User pays using AntiPay UI
+3. User completes payment
+4. AntiPay -> webhook (backend notified)
+5. Backend -> mark order as PAID
+6. User -> redirected to success/cancel page
+7. (Optional) backend -> /verify for double check
