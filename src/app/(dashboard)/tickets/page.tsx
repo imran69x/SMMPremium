@@ -42,7 +42,7 @@ export default function TicketsPage() {
       });
       setTickets(list);
       
-      setActiveTicket(currentActive => {
+      setActiveTicket((currentActive: any) => {
         if (currentActive) {
           const updatedActive = list.find(t => t.id === currentActive.id);
           return updatedActive || currentActive;
