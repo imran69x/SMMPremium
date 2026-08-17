@@ -119,9 +119,9 @@ export default function NewOrder() {
 
   useEffect(() => {
     if (filteredServices.length > 0) {
-      const serviceExists = filteredServices.find(s => s.service === selectedService);
+      const serviceExists = filteredServices.find(s => s.service.toString() === selectedService.toString());
       if (!serviceExists) {
-        setSelectedService(filteredServices[0].service);
+        setSelectedService(filteredServices[0].service.toString());
       }
     } else {
       setSelectedService('');

@@ -1,13 +1,16 @@
 import { NextResponse } from 'next/server';
 import { smmSun } from '@/lib/providers/smmsun';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { db } from '@/lib/firebase/config';
+import { doc, getDoc } from 'firebase/firestore';
 
-function getProfitRatio(): number {
+async function getProfitRatio(): Promise<number> {
   try {
-    const raw = readFileSync(join(process.cwd(), 'src', 'data', 'settings.json'), 'utf8');
-    const data = JSON.parse(raw);
-    return typeof data.profitRatio === 'number' && data.profitRatio > 0 ? data.profitRatio : 1;
+    const docSnap = await getDoc(doc(db, 'settings', 'general'));
+    if (docSnap.exists()) {
+      const data = docSnap.data();
+      return typeof data.profitRatio === 'number' && data.profitRatio > 0 ? data.profitRatio : 1;
+    }
+    return 1;
   } catch {
     return 1;
   }
@@ -17,7 +20,7 @@ export async function GET() {
   try {
     const [services, profitRatio] = await Promise.all([
       smmSun.getServices(),
-      Promise.resolve(getProfitRatio()),
+      getProfitRatio(),
     ]);
 
     if (!Array.isArray(services)) {
@@ -36,3 +39,4 @@ export async function GET() {
     return NextResponse.json({ error: 'Failed to fetch services' }, { status: 500 });
   }
 }
+
