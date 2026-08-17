@@ -40,11 +40,68 @@ export default function AdminOrders() {
     setError('');
     try {
       const querySnapshot = await getDocs(collection(db, 'orders'));
-      const list: any[] = [];
+      let list: any[] = [];
       querySnapshot.forEach((docSnap) => {
         list.push({ id: docSnap.id, ...docSnap.data() });
       });
       list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      
+      // Async Syncing of active orders
+      const activeOrders = list.filter(o => {
+        const s = (o.status || '').toLowerCase();
+        return o.apiOrderId && !['completed', 'canceled', 'cancelled', 'partial'].includes(s);
+      });
+
+      if (activeOrders.length > 0) {
+        try {
+          const apiOrderIds = activeOrders.map(o => o.apiOrderId);
+          const syncRes = await fetch('/api/orders/sync-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apiOrderIds })
+          });
+          const syncData = await syncRes.json();
+          
+          if (syncData.success && syncData.statuses) {
+            let updated = false;
+            for (const order of activeOrders) {
+              const apiData = syncData.statuses[order.apiOrderId];
+              if (apiData) {
+                const newStatus = apiData.status ? apiData.status.toLowerCase() : (order.status || '').toLowerCase();
+                const newStartCount = apiData.start_count !== undefined ? apiData.start_count : order.start_count;
+                const newRemains = apiData.remains !== undefined ? apiData.remains : order.remains;
+                const oldStatus = (order.status || '').toLowerCase();
+                
+                const hasChanges = newStatus !== oldStatus || 
+                                   newStartCount !== order.start_count || 
+                                   newRemains !== order.remains;
+                
+                if (hasChanges) {
+                  // Update Firestore
+                  const updates: any = {};
+                  if (newStatus !== oldStatus) updates.status = newStatus;
+                  if (newStartCount !== order.start_count) updates.start_count = newStartCount;
+                  if (newRemains !== order.remains) updates.remains = newRemains;
+                  
+                  // Need to import doc, updateDoc
+                  const { doc, updateDoc } = await import('firebase/firestore');
+                  await updateDoc(doc(db, 'orders', order.id), updates);
+                  
+                  // Update local list
+                  const index = list.findIndex(o => o.id === order.id);
+                  if (index !== -1) {
+                    list[index] = { ...list[index], ...updates };
+                  }
+                  updated = true;
+                }
+              }
+            }
+          }
+        } catch (syncErr) {
+          console.error("Failed to sync statuses:", syncErr);
+        }
+      }
+
       setOrders(list);
     } catch (err: any) {
       console.error("Error loading orders:", err);
@@ -164,6 +221,8 @@ export default function AdminOrders() {
                   <th className="text-left px-4 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">Link</th>
                   <th className="text-left px-4 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">Qty</th>
                   <th className="text-left px-4 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">Charge</th>
+                  <th className="text-left px-4 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">Start</th>
+                  <th className="text-left px-4 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">Remains</th>
                   <th className="text-left px-4 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">Status</th>
                   <th className="text-left px-4 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">Date</th>
                 </tr>
@@ -208,6 +267,10 @@ export default function AdminOrders() {
                     </td>
                     <td className="px-4 py-3 font-bold text-slate-700">{parseInt(order.quantity || 0).toLocaleString()}</td>
                     <td className="px-4 py-3 font-bold text-slate-700">${parseFloat(order.charge || 0).toFixed(4)}</td>
+                    <td className="px-4 py-3">
+                      <span className="bg-blue-500 text-white px-2 py-0.5 rounded text-xs font-bold">{order.start_count !== undefined ? order.start_count : (order.apiData?.start_count || 0)}</span>
+                    </td>
+                    <td className="px-4 py-3 font-bold text-slate-700">{order.remains !== undefined ? order.remains : (order.apiData?.remains || 0)}</td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 rounded-lg text-xs font-bold capitalize ${statusColors[order.status?.toLowerCase()] || 'bg-slate-50 text-slate-600'}`}>
                         {order.status || 'unknown'}

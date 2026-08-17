@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFileSync, readFileSync } from 'fs';
-import { join } from 'path';
-
-const SETTINGS_PATH = join(process.cwd(), 'src', 'data', 'settings.json');
-
-function readSettings() {
-  try {
-    return JSON.parse(readFileSync(SETTINGS_PATH, 'utf8'));
-  } catch {
-    return { profitRatio: 1, usdToBdtRate: 120 };
-  }
-}
+import { adminDb } from '@/lib/firebase/admin';
 
 export async function GET() {
-  return NextResponse.json(readSettings());
+  try {
+    const docSnap = await adminDb.collection('settings').doc('general').get();
+    if (docSnap.exists) {
+      return NextResponse.json(docSnap.data());
+    } else {
+      return NextResponse.json({ profitRatio: 1, usdToBdtRate: 120 });
+    }
+  } catch (error: any) {
+    console.error('Failed to get settings:', error);
+    return NextResponse.json({ profitRatio: 1, usdToBdtRate: 120 });
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -29,10 +28,12 @@ export async function POST(req: NextRequest) {
     }
 
     const settings = { profitRatio, usdToBdtRate };
-    writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+    
+    await adminDb.collection('settings').doc('general').set(settings, { merge: true });
 
     return NextResponse.json({ success: true, settings });
   } catch (err: any) {
+    console.error('Failed to save settings:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
