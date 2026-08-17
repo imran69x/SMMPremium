@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { CreditCard, Smartphone, CheckCircle2, ArrowRight, ShieldCheck, Loader } from 'lucide-react';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useCurrency } from '@/lib/contexts/CurrencyContext';
@@ -25,27 +25,31 @@ export default function AddFunds() {
       setLoadingTx(false);
       return;
     }
-    const loadTx = async () => {
-      try {
-        const q = query(
-          collection(db, 'antipay_transactions'),
-          where('uid', '==', user.uid),
-          where('status', '==', 'completed')
-        );
-        const querySnapshot = await getDocs(q);
-        const list: any[] = [];
-        querySnapshot.forEach(doc => {
-          list.push({ id: doc.id, ...doc.data() });
-        });
-        list.sort((a, b) => new Date(b.createdAt?.seconds * 1000 || 0).getTime() - new Date(a.createdAt?.seconds * 1000 || 0).getTime());
-        setTransactions(list);
-      } catch (err) {
-        console.error("Failed to load transactions", err);
-      } finally {
-        setLoadingTx(false);
-      }
-    };
-    loadTx();
+    
+    const q = query(
+      collection(db, 'antipay_transactions'),
+      where('uid', '==', user.uid),
+      where('status', '==', 'completed')
+    );
+
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const list: any[] = [];
+      querySnapshot.forEach(doc => {
+        list.push({ id: doc.id, ...doc.data() });
+      });
+      list.sort((a, b) => {
+        const timeA = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : (typeof a.createdAt === 'number' ? a.createdAt : new Date(a.createdAt || 0).getTime());
+        const timeB = b.createdAt?.seconds ? b.createdAt.seconds * 1000 : (typeof b.createdAt === 'number' ? b.createdAt : new Date(b.createdAt || 0).getTime());
+        return timeB - timeA;
+      });
+      setTransactions(list);
+      setLoadingTx(false);
+    }, (err) => {
+      console.error("Failed to load transactions", err);
+      setLoadingTx(false);
+    });
+
+    return () => unsubscribe();
   }, [user]);
 
   const parsedBdt = parseFloat(bdtAmount) || 0;

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { Loader } from 'lucide-react';
@@ -11,29 +11,30 @@ export default function TransactionsHistory() {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadTransactions = useCallback(async () => {
+  useEffect(() => {
     if (!user) return;
     setLoading(true);
-    try {
-      const q = query(
-        collection(db, 'orders'), 
-        where('uid', '==', user.uid)
-      );
-      const querySnapshot = await getDocs(q);
+    
+    const q = query(
+      collection(db, 'orders'), 
+      where('uid', '==', user.uid)
+    );
+
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const list: any[] = [];
       querySnapshot.forEach(doc => {
         list.push({ id: doc.id, ...doc.data() });
       });
       list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       setTransactions(list);
-    } catch (err) {
-      console.error("Failed to load transactions", err);
-    } finally {
       setLoading(false);
-    }
-  }, [user]);
+    }, (err) => {
+      console.error("Failed to load transactions", err);
+      setLoading(false);
+    });
 
-  useEffect(() => { loadTransactions(); }, [loadTransactions]);
+    return () => unsubscribe();
+  }, [user]);
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">

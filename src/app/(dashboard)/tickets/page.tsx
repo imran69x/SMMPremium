@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { db } from '@/lib/firebase/config';
-import { collection, addDoc, query, where, getDocs, updateDoc, doc, serverTimestamp, orderBy } from 'firebase/firestore';
+import { collection, addDoc, query, where, onSnapshot, updateDoc, doc, serverTimestamp, orderBy } from 'firebase/firestore';
 import { Send, Clock, CheckCircle2, MessageCircle, AlertCircle, RefreshCw, X } from 'lucide-react';
 
 export default function TicketsPage() {
@@ -25,28 +25,39 @@ export default function TicketsPage() {
   const [replyMessage, setReplyMessage] = useState('');
   const [replying, setReplying] = useState(false);
 
-  const fetchTickets = useCallback(async () => {
+  useEffect(() => {
     if (!user) return;
     setLoading(true);
-    try {
-      const q = query(collection(db, 'tickets'), where('uid', '==', user.uid));
-      const snapshot = await getDocs(q);
+    
+    const q = query(collection(db, 'tickets'), where('uid', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
       const list: any[] = [];
       snapshot.forEach(doc => {
         list.push({ id: doc.id, ...doc.data() });
       });
-      list.sort((a, b) => b.updatedAt?.toMillis() - a.updatedAt?.toMillis() || b.createdAt - a.createdAt);
+      list.sort((a, b) => {
+        const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : (a.updatedAt || 0);
+        const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : (b.updatedAt || 0);
+        return bTime - aTime || b.createdAt - a.createdAt;
+      });
       setTickets(list);
-    } catch (err) {
-      console.error("Failed to fetch tickets", err);
-    } finally {
+      
+      setActiveTicket(currentActive => {
+        if (currentActive) {
+          const updatedActive = list.find(t => t.id === currentActive.id);
+          return updatedActive || currentActive;
+        }
+        return currentActive;
+      });
+      
       setLoading(false);
-    }
-  }, [user]);
+    }, (err) => {
+      console.error("Failed to fetch tickets", err);
+      setLoading(false);
+    });
 
-  useEffect(() => {
-    fetchTickets();
-  }, [fetchTickets]);
+    return () => unsubscribe();
+  }, [user]);
 
   const getSubCategories = (subj: string) => {
     if (subj === 'Order') return ['Refill', 'Cancel', 'Not Start'];
@@ -94,7 +105,7 @@ export default function TicketsPage() {
       setSubCategory('Refill');
       setOrderIds('');
       setMessage('');
-      fetchTickets();
+      // No need to call fetchTickets, onSnapshot will handle it
     } catch (err: any) {
       setError(err.message || "Failed to create ticket");
     } finally {
@@ -123,7 +134,7 @@ export default function TicketsPage() {
 
       setActiveTicket({ ...activeTicket, messages: newMessages, status: 'Pending' });
       setReplyMessage('');
-      fetchTickets();
+      // No need to call fetchTickets, onSnapshot will handle it
     } catch (err) {
       console.error("Failed to send reply", err);
     } finally {

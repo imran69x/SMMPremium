@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Filter, ExternalLink, Loader } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useCurrency } from '@/lib/contexts/CurrencyContext';
-import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 
 export default function OrderHistory() {
@@ -17,27 +17,24 @@ export default function OrderHistory() {
   const [filterStatus, setFilterStatus] = useState('all');
   const [syncing, setSyncing] = useState(false);
 
-  const loadOrders = useCallback(async () => {
-    if (!user) return;
+  useEffect(() => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
     setError('');
-    try {
-      let list: any[] = [];
-      // First try with orderBy if index exists
-      try {
-        const q = query(collection(db, 'orders'), where('uid', '==', user.uid), orderBy('createdAt', 'desc'));
-        const querySnapshot = await getDocs(q);
-        querySnapshot.forEach((docSnap) => list.push({ id: docSnap.id, ...docSnap.data() }));
-      } catch (e: any) {
-        // Fallback without orderBy if index is missing
-        const q = query(collection(db, 'orders'), where('uid', '==', user.uid));
-        const querySnapshot = await getDocs(q);
-        querySnapshot.forEach((docSnap) => list.push({ id: docSnap.id, ...docSnap.data() }));
-        // manually sort
-        list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-      }
 
+    const q = query(collection(db, 'orders'), where('uid', '==', user.uid));
+    
+    const unsubscribe = onSnapshot(q, async (querySnapshot) => {
+      let list: any[] = [];
+      querySnapshot.forEach((docSnap) => list.push({ id: docSnap.id, ...docSnap.data() }));
+      list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      
       setOrders(list);
+      setLoading(false);
 
       // Async Syncing of active orders
       const activeOrders = list.filter(o => {
@@ -57,9 +54,6 @@ export default function OrderHistory() {
           const syncData = await syncRes.json();
           
           if (syncData.success && syncData.statuses) {
-            let updatedList = [...list];
-            let needsStateUpdate = false;
-
             for (const order of activeOrders) {
               const apiData = syncData.statuses[order.apiOrderId];
               if (apiData) {
@@ -80,19 +74,8 @@ export default function OrderHistory() {
                   if (newRemains !== order.remains) updates.remains = newRemains;
                   
                   await updateDoc(doc(db, 'orders', order.id), updates);
-                  
-                  // Update local list
-                  const idx = updatedList.findIndex(o => o.id === order.id);
-                  if (idx !== -1) {
-                    updatedList[idx] = { ...updatedList[idx], ...updates };
-                    needsStateUpdate = true;
-                  }
                 }
               }
-            }
-
-            if (needsStateUpdate) {
-              setOrders(updatedList);
             }
           }
         } catch (syncErr) {
@@ -101,22 +84,14 @@ export default function OrderHistory() {
           setSyncing(false);
         }
       }
-
-    } catch (err: any) {
+    }, (err: any) => {
       console.error("Error loading orders:", err);
       setError(err.message || 'Failed to load orders');
-    } finally {
       setLoading(false);
-    }
-  }, [user]);
+    });
 
-  useEffect(() => {
-    if (user) {
-      loadOrders();
-    } else {
-      setLoading(false);
-    }
-  }, [user, loadOrders]);
+    return () => unsubscribe();
+  }, [user]);
 
   const filteredOrders = orders.filter((o) => {
     const matchesSearch = o.id?.toLowerCase().includes(search.toLowerCase()) || 
