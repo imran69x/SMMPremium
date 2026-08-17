@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { adminDb } from '@/lib/firebase/admin';
+import { db } from '@/lib/firebase/config';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export async function GET() {
   try {
-    const docSnap = await adminDb.collection('settings').doc('general').get();
-    if (docSnap.exists) {
+    const docSnap = await getDoc(doc(db, 'settings', 'general'));
+    if (docSnap.exists()) {
       return NextResponse.json(docSnap.data());
     } else {
       return NextResponse.json({ profitRatio: 1, usdToBdtRate: 120 });
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
 
     const settings = { profitRatio, usdToBdtRate };
     
-    await adminDb.collection('settings').doc('general').set(settings, { merge: true });
+    await setDoc(doc(db, 'settings', 'general'), settings, { merge: true });
 
     return NextResponse.json({ success: true, settings });
   } catch (err: any) {
