@@ -189,6 +189,7 @@ export default function NewOrder() {
         body: JSON.stringify({
           uid: user.uid,
           serviceId: selectedService,
+          serviceName: currentServiceDetails?.name || '',
           link,
           quantity: q,
           charge: totalCharge

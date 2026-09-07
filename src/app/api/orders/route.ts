@@ -48,6 +48,7 @@ export async function POST(request: Request) {
     const orderData = {
       uid,
       serviceId,
+      serviceName: body.serviceName || '',
       link,
       quantity,
       charge,

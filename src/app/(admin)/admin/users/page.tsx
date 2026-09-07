@@ -27,6 +27,7 @@ export default function AdminUsers() {
   const [addCurrency, setAddCurrency] = useState<'USD' | 'BDT'>('USD');
   const [saving, setSaving] = useState(false);
   const [page, setPage] = useState(1);
+  const [displayCurrency, setDisplayCurrency] = useState<'BDT' | 'USD'>('BDT');
   const { rate } = useCurrency();
   const PER_PAGE = 15;
 
@@ -55,7 +56,7 @@ export default function AdminUsers() {
     return (u.name || '').toLowerCase().includes(search.toLowerCase()) ||
     (u.email || '').toLowerCase().includes(search.toLowerCase()) ||
     shortUid.includes(search);
-  });
+  }).sort((a, b) => (parseFloat(b.balance || 0) - parseFloat(a.balance || 0)));
 
   const totalPages = Math.ceil(filtered.length / PER_PAGE);
   const paginated = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
@@ -133,12 +134,36 @@ export default function AdminUsers() {
           <h1 className="text-2xl font-black text-slate-800">User Management</h1>
           <p className="text-slate-500 font-medium text-sm mt-1">{users.length} registered users</p>
         </div>
-        <button
-          onClick={loadUsers}
-          className="flex items-center gap-2 px-4 py-2 bg-[#FF6B00] text-white font-bold rounded-xl text-sm shadow hover:bg-orange-600 transition"
-        >
-          <RefreshCw className="h-4 w-4" /> Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex bg-slate-100 p-1 rounded-xl">
+            <button
+              onClick={() => setDisplayCurrency('BDT')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                displayCurrency === 'BDT'
+                  ? 'bg-white text-[#FF6B00] shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              BDT
+            </button>
+            <button
+              onClick={() => setDisplayCurrency('USD')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                displayCurrency === 'USD'
+                  ? 'bg-white text-[#FF6B00] shadow-sm'
+                  : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              USD
+            </button>
+          </div>
+          <button
+            onClick={loadUsers}
+            className="flex items-center gap-2 px-4 py-2 bg-[#FF6B00] text-white font-bold rounded-xl text-sm shadow hover:bg-orange-600 transition"
+          >
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </button>
+        </div>
       </div>
 
       {/* Search */}
@@ -209,7 +234,9 @@ export default function AdminUsers() {
                       </span>
                     </td>
                     <td className="px-5 py-4 font-bold text-slate-700">
-                      ${parseFloat(user.balance || 0).toFixed(2)}
+                      {displayCurrency === 'USD' 
+                        ? `$${parseFloat(user.balance || 0).toFixed(2)}`
+                        : `৳${(parseFloat(user.balance || 0) * rate).toFixed(2)}`}
                     </td>
                     <td className="px-5 py-4 text-slate-400 text-xs font-medium">
                       {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : '—'}
