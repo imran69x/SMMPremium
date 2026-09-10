@@ -3,7 +3,7 @@
 import React, { useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { Home, Users, Settings, ShieldAlert, ShoppingCart, TrendingUp, DollarSign, Globe, MessageCircle, BarChart3 } from 'lucide-react';
+import { Home, Users, Settings, ShieldAlert, ShoppingCart, TrendingUp, DollarSign, Globe, MessageCircle, BarChart3, Trophy } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase/config';
@@ -57,6 +57,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           {navLink('/admin/fund-transactions', <DollarSign className="h-5 w-5" />, 'Funds')}
           {navLink('/admin/tickets', <MessageCircle className="h-5 w-5" />, 'Tickets')}
           {navLink('/admin/settings', <TrendingUp className="h-5 w-5" />, 'Pricing & Rates')}
+          {navLink('/admin/currency', <Globe className="h-5 w-5" />, 'Currencies')}
+          {navLink('/admin/levels', <Trophy className="h-5 w-5" />, 'User Levels')}
         </nav>
         
         <div className="p-4 border-t border-orange-100 overflow-hidden bg-orange-50/30 flex flex-col gap-2">

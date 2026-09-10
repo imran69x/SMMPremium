@@ -20,7 +20,7 @@ const TiktokIcon = (props: any) => <img src="https://storage.perfectcdn.com/kf2y
 
 export default function NewOrder() {
   const { user, userData, loading: authLoading } = useAuth();
-  const { formatPrice } = useCurrency();
+  const { formatPrice, rate } = useCurrency();
   const router = useRouter();
 
   const [services, setServices] = useState<any[]>([]);
@@ -57,16 +57,18 @@ export default function NewOrder() {
   useEffect(() => {
     async function fetchServices() {
       try {
-        const res = await fetch('/api/services');
-        const data = await res.json();
-        
+        const [servicesRes, settingsRes] = await Promise.all([
+          fetch('/api/services'),
+          fetch('/api/settings'),
+        ]);
+        const data = await servicesRes.json();
+        const settingsData = await settingsRes.json();
+
         if (Array.isArray(data)) {
           setServices(data);
-          
           if (data.length > 0) {
             const initialCategory = data[0].category;
             setSelectedCategory(initialCategory);
-            
             const categoryServices = data.filter(s => s.category === initialCategory);
             if (categoryServices.length > 0) {
               setSelectedService(categoryServices[0].service);
@@ -74,12 +76,11 @@ export default function NewOrder() {
           }
         }
       } catch (err) {
-        console.error("Failed to fetch services", err);
+        console.error('Failed to fetch services', err);
       } finally {
         setLoading(false);
       }
     }
-    
     fetchServices();
   }, []);
 
@@ -145,11 +146,13 @@ export default function NewOrder() {
 
   const totalCharge = useMemo(() => {
     if (!currentServiceDetails || !quantity) return 0;
-    const rate = parseFloat(currentServiceDetails.rate);
+    const serviceRate = parseFloat(currentServiceDetails.rate);
     const q = parseInt(quantity);
-    if (isNaN(q) || isNaN(rate)) return 0;
-    return (rate / 1000) * q;
+    if (isNaN(q) || isNaN(serviceRate)) return 0;
+    return (serviceRate / 1000) * q;
   }, [currentServiceDetails, quantity]);
+
+
 
   const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedCategory(e.target.value);
@@ -234,6 +237,15 @@ export default function NewOrder() {
           <div className="min-w-0">
             <p className="text-[10px] md:text-xs font-bold text-slate-500 uppercase">User Name</p>
             <p className="text-sm sm:text-base md:text-lg lg:text-xl font-extrabold text-slate-800 truncate w-full">{userData?.name || 'User'}</p>
+            {userData?.level && (
+              <Link 
+                href="/level" 
+                className="inline-flex items-center gap-1 text-[10px] font-black uppercase text-[#FF6B00] bg-orange-50 px-2 py-0.5 rounded border border-orange-200/60 hover:bg-orange-100 transition mt-1"
+                title="View VIP Level"
+              >
+                🏆 {userData.level}
+              </Link>
+            )}
           </div>
         </div>
 
@@ -257,6 +269,7 @@ export default function NewOrder() {
           </div>
         </div>
 
+        {/* My Balance */}
         <div className="bg-white border border-slate-100 rounded-xl p-3 md:p-5 flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-left gap-2 md:gap-4 shadow-sm">
           <div className="h-10 w-10 md:h-12 md:w-12 shrink-0 rounded-full bg-blue-50 flex items-center justify-center text-xl md:text-2xl border border-blue-100">
             💰

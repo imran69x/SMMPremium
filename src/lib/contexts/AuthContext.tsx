@@ -11,6 +11,9 @@ interface UserData {
   name?: string;
   role: 'admin' | 'customer';
   balance: number;
+  level?: string;
+  levelCreditBdt?: number;
+  shortUid?: string;
 }
 
 interface AuthContextType {

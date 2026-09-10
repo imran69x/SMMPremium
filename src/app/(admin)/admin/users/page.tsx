@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Search, UserCheck, DollarSign, ChevronLeft, ChevronRight, Loader, RefreshCw, Copy } from 'lucide-react';
+import { Search, UserCheck, DollarSign, ChevronLeft, ChevronRight, Loader, RefreshCw, Copy, MinusCircle } from 'lucide-react';
 import { doc, updateDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { useCurrency } from '@/lib/contexts/CurrencyContext';
@@ -22,14 +22,40 @@ export default function AdminUsers() {
   const [error, setError] = useState('');
   const [addBalanceUser, setAddBalanceUser] = useState<any | null>(null);
   const [editBalanceUser, setEditBalanceUser] = useState<any | null>(null);
+  const [removeBalanceUser, setRemoveBalanceUser] = useState<any | null>(null);
   const [addAmount, setAddAmount] = useState('');
   const [editAmount, setEditAmount] = useState('');
-  const [addCurrency, setAddCurrency] = useState<'USD' | 'BDT'>('USD');
+  const [removeAmount, setRemoveAmount] = useState('');
+  const [addCurrency, setAddCurrency] = useState<'USD' | 'BDT'>('BDT');
+  const [removeCurrency, setRemoveCurrency] = useState<'USD' | 'BDT'>('BDT');
+  const [activeCurrencies, setActiveCurrencies] = useState<string[]>(['USD', 'BDT']);
   const [saving, setSaving] = useState(false);
   const [page, setPage] = useState(1);
   const [displayCurrency, setDisplayCurrency] = useState<'BDT' | 'USD'>('BDT');
+  const [totalSpentMap, setTotalSpentMap] = useState<Record<string, number>>({});
   const { rate } = useCurrency();
   const PER_PAGE = 15;
+
+  // Load active currencies from settings to set smart default
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then(data => {
+        const active: string[] = data.activeCurrencies || ['USD', 'BDT'];
+        setActiveCurrencies(active);
+        // If BDT is active, default to BDT; otherwise USD
+        if (active.includes('BDT')) {
+          setAddCurrency('BDT');
+          setRemoveCurrency('BDT');
+          setDisplayCurrency('BDT');
+        } else {
+          setAddCurrency('USD');
+          setRemoveCurrency('USD');
+          setDisplayCurrency('USD');
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   async function loadUsers() {
     setLoading(true);
@@ -41,6 +67,20 @@ export default function AdminUsers() {
         list.push({ id: docSnap.id, ...docSnap.data() });
       });
       setUsers(list);
+
+      // Load total spent from orders per user (charge field, USD)
+      const ordersSnap = await getDocs(collection(db, 'orders'));
+      const spentMap: Record<string, number> = {};
+      ordersSnap.forEach((docSnap) => {
+        const o = docSnap.data();
+        const uid = o.uid;
+        if (!uid) return;
+        const charge = parseFloat(o.charge || o.totalCharge || 0);
+        if (!isNaN(charge) && charge > 0) {
+          spentMap[uid] = (spentMap[uid] || 0) + charge;
+        }
+      });
+      setTotalSpentMap(spentMap);
     } catch (err: any) {
       console.error("Error loading users:", err);
       setError(err.message || 'Failed to load users');
@@ -67,6 +107,7 @@ export default function AdminUsers() {
     let finalAmount = parseFloat(addAmount);
     if (isNaN(finalAmount) || finalAmount <= 0) return;
     
+    const originalBdt = addCurrency === 'BDT' ? finalAmount : null;
     if (addCurrency === 'BDT') {
       finalAmount = finalAmount / rate;
     }
@@ -76,13 +117,16 @@ export default function AdminUsers() {
       const res = await fetch('/api/admin/add-balance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: addBalanceUser.id, amountToAdd: finalAmount }),
+        body: JSON.stringify({
+          userId: addBalanceUser.id,
+          amountToAdd: finalAmount,
+          currency: addCurrency,          // pass currency for transaction log
+          bdtAmount: originalBdt,         // raw BDT if entered in BDT
+        }),
       });
 
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to update balance');
-      }
+      if (!res.ok) throw new Error(data.error || 'Failed to update balance');
 
       setUsers(prev => prev.map(u => u.id === addBalanceUser.id ? { ...u, balance: data.newBalance } : u));
       setAddBalanceUser(null);
@@ -100,6 +144,7 @@ export default function AdminUsers() {
     let finalAmount = parseFloat(editAmount);
     if (isNaN(finalAmount) || finalAmount < 0) return;
 
+    const originalBdt = addCurrency === 'BDT' ? finalAmount : null;
     if (addCurrency === 'BDT') {
       finalAmount = finalAmount / rate;
     }
@@ -109,18 +154,62 @@ export default function AdminUsers() {
       const res = await fetch('/api/admin/edit-balance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: editBalanceUser.id, newBalance: finalAmount }),
+        body: JSON.stringify({
+          userId: editBalanceUser.id,
+          newBalance: finalAmount,
+          currency: addCurrency,
+          bdtAmount: originalBdt,
+        }),
       });
 
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to edit balance');
-      }
+      if (!res.ok) throw new Error(data.error || 'Failed to edit balance');
 
       setUsers(prev => prev.map(u => u.id === editBalanceUser.id ? { ...u, balance: data.newBalance } : u));
       setEditBalanceUser(null);
     } catch (err: any) {
       alert(err.message || 'Error editing balance');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemoveBalance = async () => {
+    if (!removeBalanceUser || !removeAmount) return;
+    
+    let rawAmount = parseFloat(removeAmount);
+    if (isNaN(rawAmount) || rawAmount <= 0) return;
+    
+    const finalAmountUsd = removeCurrency === 'BDT' ? rawAmount / rate : rawAmount;
+    const originalBdt = removeCurrency === 'BDT' ? rawAmount : rawAmount * rate;
+
+    const currentBalUsd = parseFloat(removeBalanceUser.balance || 0);
+    if (finalAmountUsd > currentBalUsd + 0.0001) {
+      alert(`User balance is not enough to deduct this amount. Current balance: ${removeCurrency === 'BDT' ? (currentBalUsd * rate).toFixed(2) + ' BDT' : '$' + currentBalUsd.toFixed(4)}`);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/remove-balance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: removeBalanceUser.id,
+          amountToRemove: finalAmountUsd,
+          currency: removeCurrency,
+          bdtAmount: originalBdt,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to remove balance');
+
+      setUsers(prev => prev.map(u => u.id === removeBalanceUser.id ? { ...u, balance: data.newBalance } : u));
+      setRemoveBalanceUser(null);
+      setRemoveAmount('');
+    } catch (err: any) {
+      alert(err.message || 'Error removing balance');
     } finally {
       setSaving(false);
     }
@@ -198,6 +287,7 @@ export default function AdminUsers() {
                   <th className="text-left px-5 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">User</th>
                   <th className="text-left px-5 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">Role</th>
                   <th className="text-left px-5 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">Balance</th>
+                  <th className="text-left px-5 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">Total Spent</th>
                   <th className="text-left px-5 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">Joined</th>
                   <th className="text-left px-5 py-4 font-bold text-slate-500 uppercase text-xs tracking-wide">Actions</th>
                 </tr>
@@ -229,14 +319,30 @@ export default function AdminUsers() {
                       </div>
                     </td>
                     <td className="px-5 py-4">
-                      <span className={`px-2.5 py-1 rounded-lg text-xs font-bold ${user.role === 'admin' ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-700'}`}>
-                        {user.role || 'customer'}
-                      </span>
+                      <div className="flex flex-col gap-1 items-start">
+                        <span className={`px-2.5 py-1 rounded-lg text-xs font-bold ${user.role === 'admin' ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-700'}`}>
+                          {user.role || 'customer'}
+                        </span>
+                        {user.level && (
+                          <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-orange-100 text-[#FF6B00]">
+                            🏆 {user.level}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-5 py-4 font-bold text-slate-700">
                       {displayCurrency === 'USD' 
                         ? `$${parseFloat(user.balance || 0).toFixed(2)}`
-                        : `৳${(parseFloat(user.balance || 0) * rate).toFixed(2)}`}
+                        : `${(parseFloat(user.balance || 0) * rate).toFixed(2)} BDT`}
+                    </td>
+                    <td className="px-5 py-4 font-bold text-purple-700">
+                      {(() => {
+                        const spentUsd = totalSpentMap[user.uid || user.id] || 0;
+                        if (spentUsd === 0) return <span className="text-slate-300 font-medium">—</span>;
+                        return displayCurrency === 'USD'
+                          ? `$${spentUsd.toFixed(2)}`
+                          : `${(spentUsd * rate).toFixed(2)} BDT`;
+                      })()}
                     </td>
                     <td className="px-5 py-4 text-slate-400 text-xs font-medium">
                       {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : '—'}
@@ -244,14 +350,40 @@ export default function AdminUsers() {
                     <td className="px-5 py-4">
                       <div className="flex gap-2">
                         <button
-                          onClick={() => { setAddBalanceUser(user); setAddAmount(''); setAddCurrency('USD'); }}
+                          onClick={() => { 
+                            const defaultCurr = activeCurrencies.includes('BDT') ? 'BDT' : 'USD';
+                            setAddCurrency(defaultCurr);
+                            setAddBalanceUser(user); 
+                            setAddAmount(''); 
+                          }}
                           title="Add Balance"
                           className="flex items-center justify-center p-2 rounded-lg bg-green-50 text-green-700 hover:bg-green-100 transition text-xs font-bold"
                         >
                           <DollarSign className="h-4 w-4" /> <span className="ml-1 hidden sm:inline">Add</span>
                         </button>
                         <button
-                          onClick={() => { setEditBalanceUser(user); setEditAmount(parseFloat(user.balance || 0).toFixed(4)); setAddCurrency('USD'); }}
+                          onClick={() => { 
+                            const defaultCurr = activeCurrencies.includes('BDT') ? 'BDT' : 'USD';
+                            setRemoveCurrency(defaultCurr);
+                            setRemoveBalanceUser(user); 
+                            setRemoveAmount(''); 
+                          }}
+                          title="Remove Balance"
+                          className="flex items-center justify-center p-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition text-xs font-bold"
+                        >
+                          <MinusCircle className="h-4 w-4" /> <span className="ml-1 hidden sm:inline">Remove</span>
+                        </button>
+                        <button
+                          onClick={() => { 
+                            const defaultCurr = activeCurrencies.includes('BDT') ? 'BDT' : 'USD';
+                            setAddCurrency(defaultCurr);
+                            setEditBalanceUser(user); 
+                            if (defaultCurr === 'BDT') {
+                              setEditAmount((parseFloat(user.balance || 0) * rate).toFixed(2));
+                            } else {
+                              setEditAmount(parseFloat(user.balance || 0).toFixed(4));
+                            }
+                          }}
                           title="Edit Balance"
                           className="flex items-center justify-center p-2 rounded-lg bg-orange-50 text-[#FF6B00] hover:bg-orange-100 transition text-xs font-bold"
                         >
@@ -290,15 +422,15 @@ export default function AdminUsers() {
           <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm border border-orange-100">
             <h3 className="text-lg font-black text-slate-800 mb-1">Add Balance</h3>
             <p className="text-sm text-slate-500 mb-1">Adding to <strong>{addBalanceUser.name || addBalanceUser.email}</strong></p>
-            <p className="text-xs text-slate-400 mb-4">Current balance: <strong>${parseFloat(addBalanceUser.balance || 0).toFixed(4)}</strong></p>
+            <p className="text-xs text-slate-400 mb-4">Current balance: <strong>{(parseFloat(addBalanceUser.balance || 0) * rate).toFixed(2)} BDT / ${parseFloat(addBalanceUser.balance || 0).toFixed(4)}</strong></p>
             <div className="flex gap-2 mb-4">
               <select 
                 value={addCurrency} 
                 onChange={e => setAddCurrency(e.target.value as 'USD' | 'BDT')}
                 className="px-3 py-3 border border-slate-200 rounded-xl font-bold text-slate-800 outline-none focus:border-[#FF6B00] transition bg-white"
               >
-                <option value="USD">USD</option>
-                <option value="BDT">BDT</option>
+                {activeCurrencies.includes('BDT') && <option value="BDT">BDT</option>}
+                {activeCurrencies.includes('USD') && <option value="USD">USD ($)</option>}
               </select>
               <input
                 type="number"
@@ -312,7 +444,7 @@ export default function AdminUsers() {
             <div className="flex gap-3">
               <button onClick={() => setAddBalanceUser(null)} className="flex-1 py-2.5 rounded-xl border border-slate-200 font-bold text-slate-600 hover:bg-slate-50 transition text-sm">Cancel</button>
               <button onClick={handleAddBalance} disabled={saving} className="flex-1 py-2.5 rounded-xl bg-[#FF6B00] text-white font-black text-sm hover:bg-orange-600 transition shadow disabled:opacity-50">
-                {saving ? 'Saving...' : `Add ${addCurrency === 'USD' ? '$' : '৳'}${addAmount || '0'}`}
+                {saving ? 'Saving...' : addCurrency === 'USD' ? `Add $${addAmount || '0'}` : `Add ${addAmount || '0'} BDT`}
               </button>
             </div>
           </div>
@@ -325,14 +457,13 @@ export default function AdminUsers() {
           <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm border border-orange-100">
             <h3 className="text-lg font-black text-slate-800 mb-1">Edit Balance</h3>
             <p className="text-sm text-slate-500 mb-1">Editing for <strong>{editBalanceUser.name || editBalanceUser.email}</strong></p>
-            <p className="text-xs text-slate-400 mb-4">Current balance: <strong>${parseFloat(editBalanceUser.balance || 0).toFixed(4)}</strong></p>
+            <p className="text-xs text-slate-400 mb-4">Current balance: <strong>{(parseFloat(editBalanceUser.balance || 0) * rate).toFixed(2)} BDT / ${parseFloat(editBalanceUser.balance || 0).toFixed(4)}</strong></p>
             <div className="flex gap-2 mb-4">
               <select 
                 value={addCurrency} 
                 onChange={e => {
                   const newCurr = e.target.value as 'USD' | 'BDT';
                   setAddCurrency(newCurr);
-                  // Optional: Convert the input value if they switch
                   if (editAmount) {
                     const currentAmt = parseFloat(editAmount);
                     if (!isNaN(currentAmt)) {
@@ -342,8 +473,8 @@ export default function AdminUsers() {
                 }}
                 className="px-3 py-3 border border-slate-200 rounded-xl font-bold text-slate-800 outline-none focus:border-[#FF6B00] transition bg-white"
               >
-                <option value="USD">USD</option>
-                <option value="BDT">BDT</option>
+                {activeCurrencies.includes('BDT') && <option value="BDT">BDT</option>}
+                {activeCurrencies.includes('USD') && <option value="USD">USD ($)</option>}
               </select>
               <input
                 type="number"
@@ -357,7 +488,44 @@ export default function AdminUsers() {
             <div className="flex gap-3">
               <button onClick={() => setEditBalanceUser(null)} className="flex-1 py-2.5 rounded-xl border border-slate-200 font-bold text-slate-600 hover:bg-slate-50 transition text-sm">Cancel</button>
               <button onClick={handleEditBalance} disabled={saving} className="flex-1 py-2.5 rounded-xl bg-[#FF6B00] text-white font-black text-sm hover:bg-orange-600 transition shadow disabled:opacity-50">
-                {saving ? 'Saving...' : `Set ${addCurrency === 'USD' ? '$' : '৳'}${editAmount || '0'}`}
+                {saving ? 'Saving...' : addCurrency === 'USD' ? `Set $${editAmount || '0'}` : `Set ${editAmount || '0'} BDT`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remove Balance Modal */}
+      {removeBalanceUser && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm border border-red-100">
+            <h3 className="text-lg font-black text-red-600 mb-1">Remove Balance</h3>
+            <p className="text-sm text-slate-500 mb-1">Deducting from <strong>{removeBalanceUser.name || removeBalanceUser.email}</strong></p>
+            <p className="text-xs text-slate-400 mb-4">
+              Current balance: <strong>{(parseFloat(removeBalanceUser.balance || 0) * rate).toFixed(2)} BDT / ${parseFloat(removeBalanceUser.balance || 0).toFixed(4)}</strong>
+            </p>
+            <div className="flex gap-2 mb-4">
+              <select 
+                value={removeCurrency} 
+                onChange={e => setRemoveCurrency(e.target.value as 'USD' | 'BDT')}
+                className="px-3 py-3 border border-slate-200 rounded-xl font-bold text-slate-800 outline-none focus:border-red-500 transition bg-white"
+              >
+                {activeCurrencies.includes('BDT') && <option value="BDT">BDT</option>}
+                {activeCurrencies.includes('USD') && <option value="USD">USD ($)</option>}
+              </select>
+              <input
+                type="number"
+                placeholder={`Amount to remove in ${removeCurrency}`}
+                value={removeAmount}
+                onChange={e => setRemoveAmount(e.target.value)}
+                className="flex-1 px-4 py-3 border border-slate-200 rounded-xl font-bold text-slate-800 outline-none focus:border-red-500 transition"
+                autoFocus
+              />
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setRemoveBalanceUser(null)} className="flex-1 py-2.5 rounded-xl border border-slate-200 font-bold text-slate-600 hover:bg-slate-50 transition text-sm">Cancel</button>
+              <button onClick={handleRemoveBalance} disabled={saving} className="flex-1 py-2.5 rounded-xl bg-red-600 text-white font-black text-sm hover:bg-red-700 transition shadow disabled:opacity-50">
+                {saving ? 'Removing...' : removeCurrency === 'USD' ? `Remove $${removeAmount || '0'}` : `Remove ${removeAmount || '0'} BDT`}
               </button>
             </div>
           </div>

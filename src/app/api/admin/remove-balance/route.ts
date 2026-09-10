@@ -4,13 +4,13 @@ import { doc, getDoc, updateDoc, addDoc, collection } from 'firebase/firestore';
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId, amountToAdd, currency, bdtAmount } = await req.json();
+    const { userId, amountToRemove, currency, bdtAmount } = await req.json();
 
-    if (!userId || isNaN(Number(amountToAdd))) {
+    if (!userId || isNaN(Number(amountToRemove))) {
       return NextResponse.json({ error: 'Invalid userId or amount' }, { status: 400 });
     }
 
-    const numAmount = parseFloat(amountToAdd);
+    const numAmount = parseFloat(amountToRemove);
     if (numAmount <= 0) {
       return NextResponse.json({ error: 'Amount must be greater than zero' }, { status: 400 });
     }
@@ -23,7 +23,14 @@ export async function POST(req: NextRequest) {
     }
 
     const currentBalance = parseFloat(userSnap.data()?.balance || 0);
-    const newBalance = currentBalance + numAmount;
+
+    if (numAmount > currentBalance + 0.00001) {
+      return NextResponse.json({ 
+        error: `Insufficient balance. User has only ${currentBalance.toFixed(4)} USD balance.` 
+      }, { status: 400 });
+    }
+
+    const newBalance = Math.max(0, currentBalance - numAmount);
 
     await updateDoc(userRef, {
       balance: newBalance,
@@ -33,18 +40,18 @@ export async function POST(req: NextRequest) {
     const chosenCurrency = currency === 'BDT' ? 'BDT' : 'USD';
     const rawBdt = bdtAmount !== undefined && bdtAmount !== null ? Number(bdtAmount) : null;
 
-    // Log admin credit to transaction history
+    // Log admin debit to transaction history
     await addDoc(collection(db, 'admin_balance_adjustments'), {
       uid: userId,
-      type: 'admin_credit',
+      type: 'admin_debit',
       amount: numAmount,
       currency: chosenCurrency,
       bdtAmount: rawBdt,
       oldBalance: currentBalance,
       newBalance,
       note: chosenCurrency === 'BDT'
-        ? `Admin added ${rawBdt !== null ? rawBdt.toFixed(2) : ''} BDT to account`
-        : `Admin added $${numAmount.toFixed(4)} to account`,
+        ? `Admin removed balance: ${rawBdt !== null ? rawBdt.toFixed(2) : ''} BDT`
+        : `Admin removed balance: $${numAmount.toFixed(4)}`,
       createdAt: new Date().toISOString(),
     });
 
@@ -52,12 +59,11 @@ export async function POST(req: NextRequest) {
       success: true,
       newBalance,
       message: chosenCurrency === 'BDT'
-        ? `Successfully added ${rawBdt !== null ? rawBdt.toFixed(2) : ''} BDT to user!`
-        : `Successfully added $${numAmount.toFixed(4)} to user!`
+        ? `Successfully removed ${rawBdt !== null ? rawBdt.toFixed(2) : ''} BDT from user!`
+        : `Successfully removed $${numAmount.toFixed(4)} from user!`
     });
   } catch (error: any) {
-    console.error('Failed to add balance:', error);
-    return NextResponse.json({ error: error.message || 'Failed to update balance' }, { status: 500 });
+    console.error('Failed to remove balance:', error);
+    return NextResponse.json({ error: error.message || 'Failed to remove balance' }, { status: 500 });
   }
 }
-

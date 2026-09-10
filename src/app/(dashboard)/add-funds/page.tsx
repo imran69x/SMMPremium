@@ -1,16 +1,26 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { CreditCard, Smartphone, CheckCircle2, ArrowRight, ShieldCheck, Loader } from 'lucide-react';
+import { CreditCard, Smartphone, CheckCircle2, ArrowRight, ShieldCheck, Loader, Gift } from 'lucide-react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { useCurrency } from '@/lib/contexts/CurrencyContext';
 import GlowingButton from '@/components/ui/GlowingButton';
 import PixelButton from '@/components/ui/PixelButton';
+
+const DEFAULT_LEVEL_SETTINGS: Record<string, { minBdt: number; maxBdt: number | null; discount: number }> = {
+  BEGINNER: { minBdt: 0,     maxBdt: 1000,  discount: 0  },
+  GOLD:     { minBdt: 1000,  maxBdt: 5000,  discount: 2  },
+  DIAMOND:  { minBdt: 5000,  maxBdt: 10000, discount: 4  },
+  VIP:      { minBdt: 10000, maxBdt: 25000, discount: 6  },
+  MASTER:   { minBdt: 25000, maxBdt: 50000, discount: 8  },
+  LEGEND:   { minBdt: 50000, maxBdt: null,  discount: 10 },
+};
+
 export default function AddFunds() {
   const { user, userData } = useAuth();
-  const { rate } = useCurrency(); // 1 USD = rate BDT
+  const { rate, activeCurrencies } = useCurrency(); // 1 USD = rate BDT
 
   const [bdtAmount, setBdtAmount] = useState<string>('20');
   const [loading, setLoading] = useState(false);
@@ -18,6 +28,20 @@ export default function AddFunds() {
   const [errorMsg, setErrorMsg] = useState('');
   const [transactions, setTransactions] = useState<any[]>([]);
   const [loadingTx, setLoadingTx] = useState(true);
+  const [bonusPct, setBonusPct] = useState(0);
+
+  // Load user's deposit bonus % from their level
+  useEffect(() => {
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then(data => {
+        const ls = data.levelSettings || DEFAULT_LEVEL_SETTINGS;
+        const userLevel = ((userData?.level || 'BEGINNER') as string).toUpperCase();
+        const levelCfg = ls[userLevel] || ls['BEGINNER'];
+        setBonusPct(levelCfg?.discount || 0);
+      })
+      .catch(() => {});
+  }, [userData?.level]);
 
   // Load user transactions
   useEffect(() => {
@@ -54,6 +78,13 @@ export default function AddFunds() {
 
   const parsedBdt = parseFloat(bdtAmount) || 0;
   const convertedUsd = rate > 0 ? (parsedBdt / rate) : 0;
+  const bonusBdt = bonusPct > 0 ? (parsedBdt * bonusPct) / 100 : 0;
+  const totalBdt = parsedBdt + bonusBdt;
+  const totalUsd = rate > 0 ? (totalBdt / rate) : 0;
+
+  // Determine if we are in BDT-only mode
+  const bdtOnly = activeCurrencies && activeCurrencies.length === 1 && activeCurrencies[0] === 'BDT';
+  const usdOnly = activeCurrencies && activeCurrencies.length === 1 && activeCurrencies[0] === 'USD';
 
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,8 +96,8 @@ export default function AddFunds() {
       return;
     }
 
-    if (parsedBdt < 20) {
-      setErrorMsg('Minimum deposit is 20 BDT.');
+    if (parsedBdt <= 0) {
+      setErrorMsg('Amount must be greater than 0.');
       return;
     }
 
@@ -105,7 +136,11 @@ export default function AddFunds() {
     <div className="max-w-4xl mx-auto space-y-8">
       <div>
         <h1 className="text-2xl font-black text-slate-800">Add Funds</h1>
-        <p className="text-slate-500 font-medium text-sm mt-1">Deposit funds in BDT — automatically converted & stored safely in USD</p>
+        <p className="text-slate-500 font-medium text-sm mt-1">
+          {bdtOnly
+            ? 'Deposit funds in BDT — credited to your account balance'
+            : 'Deposit funds in BDT — automatically converted & stored safely in USD'}
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -129,7 +164,6 @@ export default function AddFunds() {
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 font-black text-slate-400 text-sm">BDT</span>
                   <input
                     type="number"
-                    min="20"
                     placeholder="20"
                     value={bdtAmount}
                     onChange={(e) => setBdtAmount(e.target.value)}
@@ -138,17 +172,53 @@ export default function AddFunds() {
                 </div>
               </div>
 
-              {/* Conversion Calculation Display */}
-              <div className="bg-orange-50/80 rounded-xl p-4 border border-orange-100 space-y-1 text-sm">
-                <div className="flex justify-between items-center text-slate-700 font-medium">
-                  <span>Exchange Rate:</span>
-                  <span className="font-bold">1 USD = {rate} BDT</span>
+              {/* Deposit Bonus Preview */}
+              {parsedBdt > 0 && bonusPct > 0 && (
+                <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200 space-y-2">
+                  <div className="flex items-center gap-2 text-green-700 font-black text-sm">
+                    <Gift className="h-4 w-4" />
+                    <span>🎁 Deposit Bonus — {bonusPct}% (Your Level: {(userData?.level || 'BEGINNER').toUpperCase()})</span>
+                  </div>
+                  <div className="space-y-1 text-sm">
+                    <div className="flex justify-between text-slate-600 font-medium">
+                      <span>Deposit Amount:</span>
+                      <span className="font-bold">৳{parsedBdt.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-green-700 font-bold">
+                      <span>+ Bonus ({bonusPct}%):</span>
+                      <span>+ ৳{bonusBdt.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-900 font-black text-base border-t border-green-200 pt-2">
+                      <span>Total Credited:</span>
+                      <span className="text-green-700">
+                        ৳{totalBdt.toFixed(2)}
+                        {!bdtOnly && <span className="text-xs font-bold text-slate-500 ml-1">(${totalUsd.toFixed(4)})</span>}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex justify-between items-center text-slate-900 font-extrabold text-base pt-1 border-t border-orange-200/60">
-                  <span>Credited USD Balance:</span>
-                  <span className="text-[#FF6B00]">${convertedUsd.toFixed(4)} USD</span>
+              )}
+
+              {/* Conversion Calculation Display (no bonus case) */}
+              {!bdtOnly && parsedBdt > 0 && bonusPct === 0 && (
+                <div className="bg-orange-50/80 rounded-xl p-4 border border-orange-100 space-y-1 text-sm">
+                  <div className="flex justify-between items-center text-slate-700 font-medium">
+                    <span>Exchange Rate:</span>
+                    <span className="font-bold">1 USD = {rate} BDT</span>
+                  </div>
+                  <div className="flex justify-between items-center text-slate-900 font-extrabold text-base pt-1 border-t border-orange-200/60">
+                    <span>Credited USD Balance:</span>
+                    <span className="text-[#FF6B00]">${convertedUsd.toFixed(4)} USD</span>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Show exchange rate info alongside bonus if not BDT only */}
+              {!bdtOnly && parsedBdt > 0 && bonusPct > 0 && (
+                <div className="text-xs text-slate-400 font-medium text-right">
+                  Exchange Rate: 1 USD = {rate} BDT
+                </div>
+              )}
 
               {errorMsg && (
                 <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 font-medium text-xs">
@@ -207,15 +277,25 @@ export default function AddFunds() {
       </div>
 
       {/* Exchange Rate Guarantee Notice */}
-      {/* Exchange Rate Guarantee Notice */}
       <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm text-sm text-slate-600 space-y-3">
         <h3 className="text-slate-800 font-black text-base flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5 text-[#FF6B00]" /> Currency & Exchange Rate Rules
+          <ShieldCheck className="h-5 w-5 text-[#FF6B00]" /> Currency & Payment Rules
         </h3>
         <ul className="space-y-2 list-disc pl-5">
-          <li><strong>BDT to USD Conversion:</strong> All deposits are made in BDT and immediately converted to USD using the active exchange rate (<strong>1 USD = {rate} BDT</strong>).</li>
-          <li><strong>Fixed Account Balance:</strong> Once credited, your account balance is stored safely in <strong>USD</strong>. Future changes to the exchange rate will <strong>NEVER reduce or alter your stored USD balance</strong>.</li>
-          <li><strong>Automatic Deposit:</strong> bKash and Nagad payments are automatically verified and credited to your account balance instantly.</li>
+          {bdtOnly ? (
+            <>
+              <li><strong>BDT Deposits:</strong> All deposits are made and stored in BDT at the current balance.</li>
+              <li><strong>Automatic Deposit:</strong> bKash and Nagad payments are automatically verified and credited to your account balance instantly.</li>
+              {bonusPct > 0 && <li><strong>🎁 Deposit Bonus:</strong> You receive a <strong>{bonusPct}% bonus</strong> on every deposit based on your level. The bonus is credited automatically alongside your deposit.</li>}
+            </>
+          ) : (
+            <>
+              <li><strong>BDT to USD Conversion:</strong> All deposits are made in BDT and immediately converted to USD using the active exchange rate (<strong>1 USD = {rate} BDT</strong>).</li>
+              <li><strong>Fixed Account Balance:</strong> Once credited, your account balance is stored safely in <strong>USD</strong>. Future changes to the exchange rate will <strong>NEVER reduce or alter your stored USD balance</strong>.</li>
+              <li><strong>Automatic Deposit:</strong> bKash and Nagad payments are automatically verified and credited to your account balance instantly.</li>
+              {bonusPct > 0 && <li><strong>🎁 Deposit Bonus:</strong> You receive a <strong>{bonusPct}% bonus</strong> on every deposit based on your level. The bonus is credited automatically alongside your deposit.</li>}
+            </>
+          )}
         </ul>
       </div>
 
@@ -249,6 +329,13 @@ export default function AddFunds() {
                       <div className="font-black text-green-600">
                         {t.creditedUsd ? `$${t.creditedUsd.toFixed(2)}` : '$0.00'} / {t.amount ? `৳${t.amount}` : '৳0'}
                       </div>
+                      {/* Bonus Badge */}
+                      {t.bonusPct > 0 && t.bonusBdt && (
+                        <div className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-[11px] font-black">
+                          <Gift className="h-3 w-3" />
+                          +৳{Number(t.bonusBdt).toFixed(2)} Bonus ({t.bonusPct}%)
+                        </div>
+                      )}
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-xs text-slate-500 font-bold uppercase">Date</div>

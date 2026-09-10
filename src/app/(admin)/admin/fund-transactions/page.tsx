@@ -144,6 +144,11 @@ export default function FundTransactions() {
                       <td className="px-5 py-4">
                         <div className="font-black text-slate-800">৳{t.amount || 0}</div>
                         {t.creditedUsd && <div className="text-xs text-green-600 font-bold">+${t.creditedUsd.toFixed(4)}</div>}
+                        {t.bonusPct > 0 && t.bonusBdt && (
+                          <div className="inline-flex items-center gap-1 mt-1 px-2 py-0.5 bg-green-100 text-green-700 rounded-full text-[11px] font-black">
+                            🎁 +৳{Number(t.bonusBdt).toFixed(2)} Bonus
+                          </div>
+                        )}
                       </td>
                       <td className="px-5 py-4">
                         <span className={`px-2.5 py-1 rounded-md text-xs font-bold uppercase tracking-wider ${statusClass}`}>
@@ -210,6 +215,9 @@ export default function FundTransactions() {
                     <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">Amount</p>
                     <p className="text-lg font-black text-slate-800">৳{selectedTx.amount || 0}</p>
                     {selectedTx.creditedUsd && <p className="text-sm font-bold text-green-600">+${selectedTx.creditedUsd.toFixed(4)}</p>}
+                    {selectedTx.bonusPct > 0 && selectedTx.bonusBdt && (
+                      <p className="text-xs font-black text-green-700 mt-1">🎁 +৳{Number(selectedTx.bonusBdt).toFixed(2)} Bonus ({selectedTx.bonusPct}%)</p>
+                    )}
                   </div>
                 </div>
 

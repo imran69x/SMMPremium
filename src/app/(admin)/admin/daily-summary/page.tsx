@@ -36,7 +36,7 @@ const LAUNCH_DATE = '2026-09-05';
 const BDT = '\u09F3';
 
 export default function AdminDailySummary() {
-  const [activeTab, setActiveTab] = useState<'deposits' | 'expenses'>('deposits');
+  const [activeTab, setActiveTab] = useState<'deposits' | 'transfers' | 'expenses'>('deposits');
   const [expenseSubView, setExpenseSubView] = useState<'orders' | 'users'>('orders');
   const [displayCurrency, setDisplayCurrency] = useState<'BDT' | 'USD'>('BDT');
   const [loading, setLoading] = useState(true);
@@ -44,6 +44,7 @@ export default function AdminDailySummary() {
   const [usersMap, setUsersMap] = useState<Record<string, any>>({});
   const [servicesMap, setServicesMap] = useState<Record<string, string>>({});
   const [transactions, setTransactions] = useState<any[]>([]);
+  const [transfers, setTransfers] = useState<any[]>([]);  // balance transfers
   const [orders, setOrders] = useState<any[]>([]);
   const [profitRatio, setProfitRatio] = useState<number>(1);
   const [usdToBdtRate, setUsdToBdtRate] = useState<number>(120);
@@ -94,6 +95,12 @@ export default function AdminDailySummary() {
       ts.forEach(d => { tl.push({ id: d.id, ...d.data() }); });
       tl.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       setTransactions(tl);
+      // Load balance transfers (treated as deposits)
+      const bts = await getDocs(collection(db, 'balance_transfers'));
+      const btl: any[] = [];
+      bts.forEach(d => { btl.push({ id: d.id, ...d.data() }); });
+      btl.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      setTransfers(btl);
       const os = await getDocs(collection(db, 'orders'));
       const ol: any[] = [];
       os.forEach(d => { ol.push({ id: d.id, ...d.data() }); });
@@ -115,7 +122,58 @@ export default function AdminDailySummary() {
   const fmt = (usd: number) => displayCurrency === 'USD' ? `$${usd.toFixed(2)}` : `${BDT}${(usd * usdToBdtRate).toFixed(2)}`;
   const fmtBdt = (bdt: number, usd?: number) => displayCurrency === 'USD' ? `$${(usd !== undefined ? usd : bdt / usdToBdtRate).toFixed(2)}` : `${BDT}${bdt.toFixed(2)}`;
 
-  const completedDeposits = useMemo(() => transactions.filter(t => (t.status || '').toLowerCase() === 'completed' && getLocalDateKey(t.createdAt) >= LAUNCH_DATE), [transactions]);
+  // Only antipay deposits (pure deposits, no transfers mixed in)
+  const completedDeposits = useMemo(() =>
+    transactions
+      .filter(t => (t.status || '').toLowerCase() === 'completed' && getLocalDateKey(t.createdAt) >= LAUNCH_DATE),
+    [transactions]
+  );
+
+  // Transfers grouped by date
+  const completedTransfers = useMemo(() =>
+    transfers.filter(t => t.status === 'completed' && getLocalDateKey(t.createdAt) >= LAUNCH_DATE),
+    [transfers]
+  );
+
+  const transfersByDate = useMemo(() => {
+    const g: Record<string, any> = {};
+    completedTransfers.forEach(t => {
+      const dt = t.createdAt ? new Date(t.createdAt) : new Date();
+      const dk = getLocalDateKey(t.createdAt);
+      if (!dk) return;
+      const dp = dt.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+      const bdt = parseFloat(t.amountBdt || 0);
+      const usd = parseFloat(t.amount || 0);
+      const senderUser = usersMap[t.senderUid] || { name: t.senderName || 'Unknown', email: t.senderEmail || '' };
+      const recipientUser = usersMap[t.recipientUid] || { name: t.recipientName || 'Unknown', email: t.recipientEmail || '' };
+      if (!g[dk]) g[dk] = { date: dk, displayDate: dp, items: [], totalBdt: 0, totalUsd: 0 };
+      g[dk].items.push({ ...t, bdtAmount: bdt, usdAmount: usd, senderUser, recipientUser });
+      g[dk].totalBdt += bdt;
+      g[dk].totalUsd += usd;
+    });
+    return Object.values(g).sort((a, b) => b.date.localeCompare(a.date));
+  }, [completedTransfers, usersMap]);
+
+  const filteredTransfersByDate = useMemo(() => {
+    if (!search && selectedDate === 'all') return transfersByDate;
+    return transfersByDate
+      .filter(g => selectedDate === 'all' || g.date === selectedDate)
+      .map(g => {
+        const items = g.items.filter((i: any) => {
+          const q = search.toLowerCase();
+          return !search ||
+            (i.id || '').toLowerCase().includes(q) ||
+            (i.senderUser?.name || '').toLowerCase().includes(q) ||
+            (i.senderUser?.email || '').toLowerCase().includes(q) ||
+            (i.recipientUser?.name || '').toLowerCase().includes(q) ||
+            (i.recipientUser?.email || '').toLowerCase().includes(q) ||
+            getShortUid(i.senderUid).includes(q) ||
+            getShortUid(i.recipientUid).includes(q);
+        });
+        return { ...g, items, totalBdt: items.reduce((s: number, i: any) => s + i.bdtAmount, 0), totalUsd: items.reduce((s: number, i: any) => s + i.usdAmount, 0) };
+      })
+      .filter(g => g.items.length > 0);
+  }, [transfersByDate, search, selectedDate]);
 
   const depositsByDate = useMemo(() => {
     const g: Record<string, any> = {};
@@ -209,6 +267,7 @@ export default function AdminDailySummary() {
     const td = completedDeposits.filter(t => getLocalDateKey(t.createdAt) === ts);
     const ao = ordersWithProfit.filter(o => !o.isCancelled);
     const tub = Object.values(usersMap).reduce((a, u: any) => { const b = parseFloat(u.balance || 0); return a + (isNaN(b) ? 0 : b); }, 0);
+    const todayTransfers = completedTransfers.filter(t => getLocalDateKey(t.createdAt) === ts);
     return {
       todayDepBdt: td.reduce((a, t) => a + parseFloat(t.amount || 0), 0),
       todayDepUsd: td.reduce((a, t) => a + (t.creditedUsd !== undefined ? parseFloat(t.creditedUsd) : parseFloat(t.amount || 0) / usdToBdtRate), 0),
@@ -216,19 +275,23 @@ export default function AdminDailySummary() {
       totalDepBdt: completedDeposits.reduce((a, t) => a + parseFloat(t.amount || 0), 0),
       totalDepUsd: completedDeposits.reduce((a, t) => a + (t.creditedUsd !== undefined ? parseFloat(t.creditedUsd) : parseFloat(t.amount || 0) / usdToBdtRate), 0),
       totalDepCount: completedDeposits.length,
+      totalTransferBdt: completedTransfers.reduce((a, t) => a + parseFloat(t.amountBdt || 0), 0),
+      totalTransferCount: completedTransfers.length,
+      todayTransferBdt: todayTransfers.reduce((a, t) => a + parseFloat(t.amountBdt || 0), 0),
       totalSpentUsd: ao.reduce((a, o) => a + o.chargeUsd, 0),
       totalProfitUsd: ao.reduce((a, o) => a + o.profitUsd, 0),
       totalOrders: orders.length, activeOrders: ao.length,
       totalUserBal: tub, totalUsers: Object.keys(usersMap).length,
     };
-  }, [completedDeposits, ordersWithProfit, orders, usersMap, usdToBdtRate]);
+  }, [completedDeposits, completedTransfers, ordersWithProfit, orders, usersMap, usdToBdtRate]);
 
   const allDates = useMemo(() => {
     const d = new Set<string>();
     completedDeposits.forEach(t => { const k = getLocalDateKey(t.createdAt); if (k) d.add(k); });
+    transfers.forEach(t => { const k = getLocalDateKey(t.createdAt); if (k && k >= LAUNCH_DATE) d.add(k); });
     orders.forEach(o => { const k = getLocalDateKey(o.createdAt); if (k && k >= LAUNCH_DATE) d.add(k); });
     return Array.from(d).sort((a, b) => b.localeCompare(a));
-  }, [completedDeposits, orders]);
+  }, [completedDeposits, transfers, orders]);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -297,6 +360,9 @@ export default function AdminDailySummary() {
           <button onClick={() => { setActiveTab('deposits'); setSearch(''); setStatusFilter('all'); }} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-sm transition ${activeTab === 'deposits' ? 'bg-[#FF6B00] text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}>
             <CreditCard className="h-4 w-4" />Daily Deposits ({completedDeposits.length})
           </button>
+          <button onClick={() => { setActiveTab('transfers'); setSearch(''); setStatusFilter('all'); }} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-sm transition ${activeTab === 'transfers' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}>
+            🔄 Transfers ({completedTransfers.length})
+          </button>
           <button onClick={() => { setActiveTab('expenses'); setSearch(''); setStatusFilter('all'); }} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-black text-sm transition ${activeTab === 'expenses' ? 'bg-[#FF6B00] text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}`}>
             <TrendingUp className="h-4 w-4" />User Expenses & Profit ({orders.length})
           </button>
@@ -355,7 +421,7 @@ export default function AdminDailySummary() {
                     <div onClick={() => toggleDateCollapse(group.date)} className="p-4 sm:p-5 bg-gradient-to-r from-slate-50 via-orange-50/20 to-white border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 cursor-pointer hover:bg-orange-50/40 transition select-none">
                       <div className="flex items-center gap-3">
                         <div className="h-9 w-9 rounded-xl bg-orange-100 text-[#FF6B00] flex items-center justify-center"><Calendar className="h-4 w-4" /></div>
-                        <div><h3 className="font-black text-slate-800">{group.displayDate}</h3><p className="text-xs text-slate-500">{group.items.length} deposits</p></div>
+                        <div><h3 className="font-black text-slate-800">{group.displayDate}</h3><p className="text-xs text-slate-500">{group.items.length} deposit{group.items.length !== 1 ? 's' : ''} (incl. transfers)</p></div>
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="text-right"><div className="text-xs font-bold text-slate-400 uppercase">Day Total</div><div className="text-lg font-black text-[#FF6B00]">{fmtBdt(group.totalBdt, group.totalUsd)}</div></div>
@@ -384,13 +450,140 @@ export default function AdminDailySummary() {
                                     {copiedId === tx.id && <span className="text-[10px] text-green-600 font-bold">Copied!</span>}
                                   </div>
                                 </td>
-                                <td className="px-5 py-3.5"><span className="capitalize text-xs font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg">{tx.method || 'AntiPay'}</span></td>
+                                <td className="px-5 py-3.5">
+                                  {tx._sourceType === 'transfer' ? (
+                                    <div>
+                                      <span className="capitalize text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg">🔄 Transfer</span>
+                                      <div className="text-[10px] text-slate-400 mt-1">From: {tx._senderName || 'User'}</div>
+                                    </div>
+                                  ) : (
+                                    <span className="capitalize text-xs font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg">{tx.method || 'AntiPay'}</span>
+                                  )}
+                                </td>
                                 <td className="px-5 py-3.5">
                                   <div className="font-black text-slate-800 text-sm">{fmtBdt(tx.bdtAmount, tx.usdAmount)}</div>
                                   <div className="text-[11px] text-slate-400">{displayCurrency === 'BDT' ? `($${tx.usdAmount.toFixed(4)})` : `(${BDT}${tx.bdtAmount.toFixed(2)})`}</div>
                                 </td>
-                                <td className="px-5 py-3.5"><span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-200"><CheckCircle className="h-3 w-3" /> Completed</span></td>
+                                <td className="px-5 py-3.5">
+                                  {tx._sourceType === 'transfer' ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">🔄 Transfer</span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-green-50 text-green-700 border border-green-200"><CheckCircle className="h-3 w-3" /> Completed</span>
+                                  )}
+                                </td>
                                 <td className="px-5 py-3.5 text-right text-xs text-slate-500 whitespace-nowrap">{tx.createdAt ? new Date(tx.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {activeTab === 'transfers' && (
+            <div className="space-y-4">
+              {/* Transfers Summary Bar */}
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-2xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-blue-600 text-white rounded-xl text-lg">🔄</div>
+                  <div>
+                    <span className="font-black text-slate-800 text-sm">Balance Transfers</span>
+                    <p className="text-xs text-slate-600 mt-0.5">All user-to-user balance transfer transactions</p>
+                  </div>
+                </div>
+                <div className="flex gap-3 text-xs font-bold">
+                  <div className="bg-white px-3 py-1.5 rounded-xl border border-blue-200 text-blue-700">
+                    Total: {fmtBdt(overallStats.totalTransferBdt)}
+                  </div>
+                  <div className="bg-white px-3 py-1.5 rounded-xl border border-blue-200 text-blue-700">
+                    Count: {overallStats.totalTransferCount}
+                  </div>
+                </div>
+              </div>
+
+              {filteredTransfersByDate.length === 0 ? (
+                <div className="bg-white border border-slate-100 rounded-2xl p-12 text-center text-slate-400">No transfers found.</div>
+              ) : filteredTransfersByDate.map(group => {
+                const collapsed = collapsedDates[`trn_${group.date}`];
+                return (
+                  <div key={group.date} className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden">
+                    <div onClick={() => toggleDateCollapse(`trn_${group.date}`)} className="p-4 sm:p-5 bg-gradient-to-r from-slate-50 via-blue-50/20 to-white border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 cursor-pointer hover:bg-blue-50/40 transition select-none">
+                      <div className="flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center"><Calendar className="h-4 w-4" /></div>
+                        <div><h3 className="font-black text-slate-800">{group.displayDate}</h3><p className="text-xs text-slate-500">{group.items.length} transfer{group.items.length !== 1 ? 's' : ''}</p></div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right"><div className="text-xs font-bold text-slate-400 uppercase">Day Total</div><div className="text-lg font-black text-blue-600">{fmtBdt(group.totalBdt, group.totalUsd)}</div></div>
+                        <div className="text-slate-400">{collapsed ? <ChevronDown className="h-5 w-5" /> : <ChevronUp className="h-5 w-5" />}</div>
+                      </div>
+                    </div>
+                    {!collapsed && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-slate-50/60 border-b border-slate-100 text-slate-500 uppercase text-xs font-black">
+                            <tr>
+                              <th className="px-5 py-3 text-left">Sender</th>
+                              <th className="px-5 py-3 text-left">Recipient</th>
+                              <th className="px-5 py-3 text-left">Transaction ID</th>
+                              <th className="px-5 py-3 text-left">Amount</th>
+                              <th className="px-5 py-3 text-left">Note</th>
+                              <th className="px-5 py-3 text-right">Time</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {group.items.map((tx: any) => (
+                              <tr key={tx.id} className="hover:bg-blue-50/20 transition">
+                                {/* Sender */}
+                                <td className="px-5 py-3.5">
+                                  <div className="flex items-center gap-2">
+                                    <div className="h-8 w-8 rounded-full bg-gradient-to-br from-red-400 to-rose-500 flex items-center justify-center text-white font-black text-xs shrink-0">
+                                      {(tx.senderUser?.name || '?').charAt(0).toUpperCase()}
+                                    </div>
+                                    <div>
+                                      <div className="font-bold text-slate-800 text-sm truncate max-w-[120px]">{tx.senderUser?.name || 'User'}</div>
+                                      <div className="text-slate-400 text-xs truncate max-w-[120px]">{tx.senderUser?.email || ''}</div>
+                                      <span className="text-[10px] font-mono bg-red-50 text-red-600 px-1.5 rounded">UID:{getShortUid(tx.senderUid)}</span>
+                                    </div>
+                                  </div>
+                                </td>
+                                {/* Recipient */}
+                                <td className="px-5 py-3.5">
+                                  <div className="flex items-center gap-2">
+                                    <div className="h-8 w-8 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center text-white font-black text-xs shrink-0">
+                                      {(tx.recipientUser?.name || '?').charAt(0).toUpperCase()}
+                                    </div>
+                                    <div>
+                                      <div className="font-bold text-slate-800 text-sm truncate max-w-[120px]">{tx.recipientUser?.name || 'User'}</div>
+                                      <div className="text-slate-400 text-xs truncate max-w-[120px]">{tx.recipientUser?.email || ''}</div>
+                                      <span className="text-[10px] font-mono bg-green-50 text-green-700 px-1.5 rounded">UID:{getShortUid(tx.recipientUid)}</span>
+                                    </div>
+                                  </div>
+                                </td>
+                                {/* Trx ID */}
+                                <td className="px-5 py-3.5">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono text-xs font-bold text-slate-700 bg-slate-100/70 px-2 py-1 rounded-md">{tx.id?.substring(0, 12) || '—'}</span>
+                                    <button onClick={() => handleCopy(tx.id, tx.id + '_copy')} className="text-slate-400 hover:text-blue-600"><Copy className="h-3.5 w-3.5" /></button>
+                                    {copiedId === tx.id + '_copy' && <span className="text-[10px] text-green-600 font-bold">Copied!</span>}
+                                  </div>
+                                </td>
+                                {/* Amount */}
+                                <td className="px-5 py-3.5">
+                                  <div className="font-black text-blue-700 text-sm">{fmtBdt(tx.bdtAmount, tx.usdAmount)}</div>
+                                  <div className="text-[11px] text-slate-400">{displayCurrency === 'BDT' ? `($${tx.usdAmount.toFixed(4)})` : `(${BDT}${tx.bdtAmount.toFixed(2)})`}</div>
+                                </td>
+                                {/* Note */}
+                                <td className="px-5 py-3.5 text-xs text-slate-500 max-w-[140px]">
+                                  {tx.note ? <span className="italic">"{tx.note}"</span> : <span className="text-slate-300">—</span>}
+                                </td>
+                                {/* Time */}
+                                <td className="px-5 py-3.5 text-right text-xs text-slate-500 whitespace-nowrap">
+                                  {tx.createdAt ? new Date(tx.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '—'}
+                                </td>
                               </tr>
                             ))}
                           </tbody>

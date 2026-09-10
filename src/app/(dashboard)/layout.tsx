@@ -6,7 +6,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import { 
   Home, PlusCircle, CreditCard, ListOrdered, Settings, LogOut, 
   Zap, Menu, ChevronLeft, Bell, Sun, Moon, ChevronDown, User, 
-  Volume2, Play, Pause, SkipForward, SkipBack, Lock, Calendar, MessageCircle, Layers, FileText
+  Volume2, Play, Pause, SkipForward, SkipBack, Lock, Calendar, MessageCircle, Layers, FileText, Trophy
 } from 'lucide-react';
 import { useAuth } from '@/lib/contexts/AuthContext';
 import { CurrencyProvider, useCurrency } from '@/lib/contexts/CurrencyContext';
@@ -19,7 +19,7 @@ import InteractiveLogoutButton from '@/components/ui/InteractiveLogoutButton';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, userData, loading } = useAuth();
-  const { currency, toggleCurrency, formatPrice } = useCurrency();
+  const { currency, toggleCurrency, formatPrice, activeCurrencies } = useCurrency();
   const { theme, toggleTheme } = useTheme();
   const router = useRouter();
   const pathname = usePathname();
@@ -93,6 +93,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <NavLink href="/add-funds" icon={<CreditCard className="h-5 w-5" />} label="ADD FUNDS" active={pathname === '/add-funds'} uppercase sidebarOpen={sidebarOpen} textGreen onClick={() => window.innerWidth < 768 && setSidebarOpen(false)} />
               <NavLink href="/orders" icon={<ListOrdered className="h-5 w-5" />} label="My Orders" active={pathname === '/orders'} sidebarOpen={sidebarOpen} onClick={() => window.innerWidth < 768 && setSidebarOpen(false)} />
               <NavLink href="/tickets" icon={<MessageCircle className="h-5 w-5" />} label="Support Tickets" active={pathname === '/tickets'} sidebarOpen={sidebarOpen} onClick={() => window.innerWidth < 768 && setSidebarOpen(false)} />
+              <NavLink href="/level" icon={<Trophy className="h-5 w-5" />} label="Level" active={pathname === '/level'} sidebarOpen={sidebarOpen} onClick={() => window.innerWidth < 768 && setSidebarOpen(false)} />
               <NavLink href="/transactions" icon={<FileText className="h-5 w-5" />} label="My Transactions" active={pathname === '/transactions'} sidebarOpen={sidebarOpen} onClick={() => window.innerWidth < 768 && setSidebarOpen(false)} />
             </div>
             {userData?.role === 'admin' && (
@@ -144,16 +145,29 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             
             <StarWarsToggle checked={theme === 'light'} onChange={toggleTheme} size={1.8} />
             
-            <div 
-              onClick={toggleCurrency}
-              className="flex bg-white/20 md:bg-[#E65C00] rounded-full text-white px-2 py-1 md:px-3 md:py-1.5 items-center gap-1 md:gap-2 text-xs md:text-sm font-bold cursor-pointer hover:bg-white/30 md:hover:bg-[#D85700] shadow-sm md:shadow-md select-none transition-colors"
-              title="Click to toggle currency"
-            >
-              <div className="h-4 w-4 md:h-5 md:px-1 bg-white/30 md:bg-orange-700 rounded-full flex items-center justify-center text-[9px] md:text-[10px] font-black">
-                {currency === 'USD' ? '$' : '৳'}
+            {activeCurrencies && activeCurrencies.length > 1 ? (
+              <div 
+                onClick={toggleCurrency}
+                className="flex bg-white/20 md:bg-[#E65C00] rounded-full text-white px-2 py-1 md:px-3 md:py-1.5 items-center gap-1 md:gap-2 text-xs md:text-sm font-bold cursor-pointer hover:bg-white/30 md:hover:bg-[#D85700] shadow-sm md:shadow-md select-none transition-colors"
+                title="Click to toggle currency"
+              >
+                {currency === 'USD' && (
+                  <div className="h-4 w-4 md:h-5 md:w-5 bg-white/30 md:bg-orange-700 rounded-full flex items-center justify-center text-[9px] md:text-[10px] font-black">
+                    $
+                  </div>
+                )}
+                {currency} <ChevronDown className="h-3 w-3 md:h-4 md:w-4" />
               </div>
-              {currency} <ChevronDown className="h-3 w-3 md:h-4 md:w-4" />
-            </div>
+            ) : activeCurrencies && activeCurrencies.length === 1 ? (
+              <div className="flex bg-white/20 md:bg-[#E65C00] rounded-full text-white px-2 py-1 md:px-3 md:py-1.5 items-center gap-1 md:gap-2 text-xs md:text-sm font-bold shadow-sm md:shadow-md select-none">
+                {activeCurrencies[0] === 'USD' && (
+                  <div className="h-4 w-4 md:h-5 md:w-5 bg-white/30 md:bg-orange-700 rounded-full flex items-center justify-center text-[9px] md:text-[10px] font-black">
+                    $
+                  </div>
+                )}
+                {activeCurrencies[0]}
+              </div>
+            ) : null}
             
             <div className="relative">
               <div 
